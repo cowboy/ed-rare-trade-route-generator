@@ -351,7 +351,7 @@ def found_route(route, depth)
     route_distance += $systems[system_name][:distance][route[index + 1] || route.first]
   end
 
-  status = sprintf 'Route #%d (Warnings: %d, Jumps: %d, Distance: %.2f, Depth: %d, Loop: %d)',
+  status = sprintf 'Route #%d (Warnings: %d, Jumps: %d, Distance: %.2f Ly, Depth: %d, Loop: %d)',
                    $routes.length + 1, warnings.length, route.length, route_distance, depth, $loop_count
   status += ' PERFECT' if warnings.empty?
   puts status
@@ -364,7 +364,7 @@ def found_route(route, depth)
     $source_sheet_url
   unless warnings.empty?
     p1 '#### Warnings'
-    warnings.each {|obj| p ' - %s', obj[:message]}
+    warnings.each {|obj| p '* %s', obj[:message]}
     p
   end
 
@@ -374,16 +374,16 @@ def found_route(route, depth)
   route.each_with_index do |system_name, index|
     system = $systems[system_name]
     distance_to_next = system[:distance][route[index + 1] || route.first]
-    p '%02d. %s (%.2f Ly)', index + 1, system_name, distance_to_next
+    p '%-3s %s (%.2f Ly)', "#{index + 1}.", system_name, distance_to_next
     sell_goods_at[system_name].each do |source|
       distance = system[:distance][source]
       $systems[source][:goods].each do |good|
-        p ' - [SELL] %s (%s @ %.2f Ly)', good[:name], source, distance
+        p '    * [SELL] %s (%s @ %.2f Ly)', good[:name], source, distance
       end
     end if sell_goods_at.has_key? system_name
     system[:goods].each do |good|
       name, cap, station_name, station_dist = good.values_at :name, :cap, :station_name, :station_dist
-      p ' -  [BUY] %s x %d (%s @ %.2f Ls)', name, cap, station_name, station_dist
+      p '    * [BUY] %s x %d (%s @ %d Ls)', name, cap, station_name, station_dist
     end
   end
   p
