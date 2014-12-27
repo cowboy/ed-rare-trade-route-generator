@@ -250,7 +250,6 @@ def get_routes_recurse(route, depth)
   return found_route(route[0..-2], depth) if route.length > 1 and route.last == route.first
   $max_depth_seen = [$max_depth_seen, depth].max
   $max_jumps_seen = [$max_jumps_seen, route.length].max
-  return if $routes.length > 300
   # Reject this route if too deep (we don't want really long routes, anyways)
   return if depth == $max_depth
   # Reject this route if too long
