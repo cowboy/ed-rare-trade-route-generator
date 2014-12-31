@@ -14,7 +14,6 @@ $csv_url = 'https://docs.google.com/feeds/download/spreadsheets/Export?key=1haUV
 $csv_file = 'ED_RareGoods_SystemsDistance - CURRENT.csv'
 $output_dir = './routes'
 
-$max_station_dist = 1000
 $max_jump_dist = 90
 $min_sell_dist = 160
 
@@ -22,6 +21,7 @@ $max_depth = 15
 $max_jumps = 13
 $best_count = 20
 
+$max_station_dist = 1000
 $warning_max_weight = 5
 $max_allowed_undersells = 2
 $min_required_sell_dist = 120
@@ -92,11 +92,11 @@ end
 # ===============================
 
 # Parse CSV file into a usable data structure
+$version_info = nil
 headers = nil
 coords_name_index = 6
 system_name_index = 6
 version_info_index = 7
-$version_info = '???'
 rows = []
 system_names = []
 coords = {}
@@ -120,11 +120,11 @@ CSV.read($csv_file).each do |row|
 end
 
 # Parse system x,y,z coords
-%w{x y z}.each_with_index do |axis, index|
+%w{x y z}.each_with_index do |axis, i|
   headers.zip(coords[axis]).each do |arr|
     system, coord = arr
     next unless system_names.include? system
-    (coords[system] ||= [])[index] = coord.to_f
+    (coords[system] ||= [])[i] = coord.to_f
   end
   coords.delete axis
 end
@@ -134,23 +134,21 @@ puts "Update: #{$version_info}"
 
 # Normalize per-system data and generate a systems map
 print 'Normalizing system data...'
-$systems = {}
+systems = {}
 rows.each do |row|
   data = Hash[headers.zip(row)]
   meta = data.reject {|k,v| system_names.include? k}
-  data.select! {|k,v| system_names.include? k}
-  data = Hash[data.map {|k,v| [k, v.to_f]}]
+  distance = Hash[data.select {|k,v| system_names.include? k}.map {|k,v| [k, v.to_f]}]
 
   system_name = meta['SYSTEM']
-  $systems[system_name] ||= {}
+  systems[system_name] ||= {}
 
-  system = $systems[system_name]
-  system[:distance] ||= data
-  system[:system_name] ||= system_name
+  system = systems[system_name]
+  system[:distance] ||= distance
   system[:coordinates] ||= coords[system_name]
   system[:goods] ||= []
 
-  # Item details
+  # Goods details
   system[:goods] << (good = {})
   good[:name] = meta['ITEM']
   good[:price] = meta['PRICE'].gsub(/\D/, '').to_i
@@ -172,56 +170,255 @@ rows.each do |row|
 end
 puts 'done'
 
+# ==============================
+# GENERATE ARRAYS OF SYSTEM DATA
+# ==============================
+
+$system_names = []
+$coordinates = []
+$goods = []
+
+# Sort systems alphabetically first, then generate arrays
+systems.to_a.sort {|a, b| a[0] <=> b[0]}.each do |system_name, system|
+  $system_names << system_name
+  $coordinates << system[:coordinates]
+  $goods << system[:goods]
+end
+
+# Build system indices
+$system_index = {}
+$system_names.each_with_index do |system_name, i|
+  $system_index[system_name] = i
+end
+
+# Compute distances (could also use the pre-computed distance info)
+$distance = $coordinates.map do |x1, y1, z1|
+  $coordinates.map do |x2, y2, z2|
+    Math.sqrt( (x1 - x2)**2 + (y1 - y2)**2 + (z1 - z2)**2 )
+  end
+end
+
+# Nothing is rejected yet!
+$rejects = Array.new systems.length
+
+puts "Systems found: #{$system_names.length}"
+
 # =========================================
 # FILTER OUT SYSTEMS WE DON'T WANT TO GO TO
 # =========================================
 
-print 'Removing systems with distant stations / missing routes...'
-# To help keep track of what systems are removed
-system_names = $systems.keys
+puts 'Removing systems with distant stations / missing routes...'
 
 # Remove stations too far away from their sun
-$systems.reject! do |system_name, system|
-  system[:goods].select! {|good| good[:station_dist] < $max_station_dist}
-  system[:goods].empty?
+$goods.each_with_index do |goods, i|
+  if goods.select {|good| good[:station_dist] < $max_station_dist}.empty?
+    puts "Removed [#{i}] #{$system_names[i]}, Station more than #{$max_station_dist} Ls from sun"
+    $rejects[i] = true
+  end
 end
+
+# Process $routable and $sellable together
+$routable = []
+$sellable = []
+# rs_arrays = [$routable, $sellable]
+rs_arrays = [$routable]
 
 # Get route-plannable systems and systems to sell to, sorted
 # by proximity (nearest first)
-$systems.select! do |system, data|
-  data[:distance].to_a.sort {|a, b| a[1] <=> b[1]}.each do |arr|
-    target, distance = arr
-    if distance > 0 and distance <= $max_jump_dist
-      (data[:max_jump_dist] ||= []) << target
+$distance.each_with_index do |distances, i|
+  next if $rejects[i]
+  rs_arrays.each {|a| a[i] = []}
+  distances.each_with_index do |distance, j|
+    if i == j || $rejects[j]
+      next
+    elsif distance <= $max_jump_dist
+      $routable[i] << j
     elsif distance >= $min_sell_dist
-      (data[:min_sell_dist] ||= []) << target
+      $sellable[i] << j
     end
   end
-  # Only keep systems that can possibly work!
-  data[:max_jump_dist] and data[:min_sell_dist]
 end
 
-# Remove distances for removed systems
-removed_systems = system_names - $systems.keys
-$systems.each do |system_name, system|
-  removed_systems.each do |removed_system_name|
-    %w{distance max_jump_dist min_sell_dist}.each do |key|
-      system[key.to_sym].delete removed_system_name
+# Iteratively remove rejected systems from $routable and $sellable
+loop do
+  rejects = rs_arrays.map {|a| a.map.with_index.select {|systems, i| systems == []}}.flatten.uniq.compact
+  break if rejects.empty?
+  $rejects.each_with_index do |state, i|
+    if rejects.include? i
+      puts "Removed [#{i}] #{$system_names[i]}, No systems <= #{$max_jump_dist} Ly (jump) and >= #{$min_sell_dist} Ly (sell)"
+      $rejects[i] = true
+      rs_arrays.each {|a| a[i] = nil}
+    else
+      rs_arrays.each {|a| a[i].reject! {|j| rejects.include? j} if a[i]}
     end
   end
 end
-puts 'done'
+
+puts "Systems remaining: #{$rejects.reject {|a| a}.length}"
+
+# #############################################################################
+# $items = %w{a B c D E f g h i j k}
+
+# def get_route(indices, remain, used, route)
+#   Enumerator.new do |y|
+#     if remain == 0
+#       # Abort if route is a reversal of another route
+#       next if route[1] > route.last
+#       # Valid route!
+#       y << route
+#       next
+#     end
+#     # Recurse
+#     indices.each do |i|
+#       next if used.include? i
+#       get_route(indices, remain - 1, used + [i], route + [i]).each do |route|
+#         y << route
+#       end
+#     end
+#   end#.lazy
+# end
+
+# def get_routes(size)
+#   cache_file = "routes-#{size}.bin"
+#   cache_path = "cache/#{cache_file}"
+#   exists = File.exist? cache_path
+#   indices = $items.map.with_index {|a,i| i}
+#   f = File.open(cache_path, exists ? 'rb' : 'wb')
+#   start = Time.now
+#   if exists
+#     print "Reading cache file #{cache_file}..."
+#     Enumerator.new do |y|
+#       loop do
+#         chunk = f.read(size * 2)
+#         if chunk.nil?
+#           printf("done (%.1fs)\n", Time.now - start)
+#           f.close
+#           break
+#         end
+#         y << chunk.unpack('s' * size)
+#       end
+#     end
+#   else
+#     print "Writing cache file #{cache_file}..."
+#     Enumerator.new do |y|
+#       indices.each_with_object([]) do |i, used|
+#         get_route(indices, size - 1, used << i, [i]).each do |route|
+#           f << route.pack('s' * size)
+#           y << route
+#         end
+#       end
+#       printf("done (%.1fs)\n", Time.now - start)
+#       f.close
+#     end
+#   end
+# end
+
+# $a = $b = 0
+# (6..$items.length).each do |length|
+#   get_routes(length).each do |route|
+#     $a += 1
+#     # route = route.map {|i| $items[i]}.join('')
+#     # puts "#{route}"
+#     # $b += 1 if /BED/.match route
+#   end
+# end
+# puts "total: #{$a}, bed: #{$b}"
+# exit
+# #############################################################################
+
+# http://pastebin.com/xBgj7C7B
+def get_route(systems, remain, used, route)
+  Enumerator.new do |y|
+    # Abort if start system can't possibly be returned to
+    if $distance[route.first][route.last] > $max_jump_dist * (remain + 1)
+      next
+    # Length reached
+    elsif remain == 0
+      # Abort if route is a reversal of another route
+      next if route[1] > route.last
+      # Valid route!
+      y << route
+      next
+    end
+    # Recurse
+    $routable[route.last].each do |i|
+      next if used.include? i
+      get_route(systems, remain - 1, used + [i], route + [i]).each do |route|
+        y << route
+      end
+    end
+  end
+end
+
+def get_routes_cached(size)
+  cache_file = "routes-#{size}-#{$max_jump_dist}-#{$max_station_dist}.bin"
+  cache_path = "cache/#{cache_file}"
+  if File.exist? cache_path
+    f = File.open cache_path, 'rb'
+    Enumerator.new do |y|
+      loop do
+        chunk = f.read(size * 2)
+        if chunk.nil?
+          f.close
+          break
+        end
+        y << chunk.unpack('s' * size)
+      end
+    end
+  else
+    f = File.open cache_path, 'wb'
+    start = Time.now
+    Enumerator.new do |y|
+      get_routes(size).each do |result|
+        f << result.pack('s' * size)
+        y << result
+      end
+      printf("Done writing %s in %.1fs\n", cache_file, Time.now - start)
+      f.close
+    end
+  end
+end
+
+
+def get_routes(size)
+  systems = $routable.compact.flatten.sort.uniq
+  Enumerator.new do |y|
+    systems.each_with_object([]) do |i, used|
+      get_route(systems, size - 1, used << i, [i]).each do |route|
+        y << route
+      end
+    end
+  end
+end
+
+n = 0
+(4..13).each do |length|
+  m = 0
+  get_routes_cached(length).each do |route|
+    m += 1
+    n += 1
+    # puts "#{route}"
+  end
+  puts "=> #{m} routes of length #{length}"
+end
+puts "=> #{n} routes total"
+
+
+
+exit
 
 # ===============================================
 # FEEBLE ATTEMPT TO MAKE ROUTING FASTER / SMARTER
 # ===============================================
+
+$nearby = []
 
 # Group "nearby" systems, ie. systems that are close enough to share the
 # exact same route-plannable systems
 print 'Grouping nearby systems...'
 $systems.reduce({}) do |memo, arr|
   system_name, system = arr
-  nearby = (system[:max_jump_dist] + [system_name]).sort
+  nearby = (system[:routable] + [system_name]).sort
   (memo[nearby] ||= []) << system_name
   memo
 end.values.select do |nearby|
@@ -262,9 +459,9 @@ def get_routes_recurse(route, depth)
   # If there are any, add all "nearby" systems to the route
   route += $systems[route.last][:nearby] if $systems[route.last].has_key? :nearby
   # Attempt to continue route for each system not already in the route
-  # (except for the start system) that is within max_jump_dist
+  # (except for the start system) that is within routable
   all_but_first = route[1..-1]
-  $systems[route.last][:max_jump_dist].each do |target|
+  $systems[route.last][:routable].each do |target|
     next if all_but_first.include? target
     get_routes_recurse route + [target], depth + 1
   end
