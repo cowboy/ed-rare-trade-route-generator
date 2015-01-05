@@ -357,12 +357,12 @@ def get_routes_cached(size)
     f = File.open cache_path, 'rb'
     Enumerator.new do |y|
       loop do
-        chunk = f.read(size * 2)
+        chunk = f.read size
         if chunk.nil?
           f.close
           break
         end
-        y << chunk.unpack('s' * size)
+        y << chunk.unpack('C' * size)
       end
     end
   else
@@ -370,7 +370,7 @@ def get_routes_cached(size)
     start = Time.now
     Enumerator.new do |y|
       get_routes(size).each do |result|
-        f << result.pack('s' * size)
+        f << result.pack('C' * size)
         y << result
       end
       printf("Done writing %s in %.1fs\n", cache_file, Time.now - start)
