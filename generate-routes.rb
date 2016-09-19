@@ -8,9 +8,9 @@ require 'pp'
 $project_name = 'Elite: Dangerous Rare Trade Route Generator'
 $project_url = 'https://github.com/cowboy/ed-rare-trade-route-generator'
 $project_version = '1.0.0'
-$source_sheet_url = 'https://docs.google.com/spreadsheets/d/1haUVaFIxFq5IPqZugJ8cfCEqBrZvFFzcA-uXB4pTfW4/edit?usp=sharing'
+$source_sheet_url = 'https://docs.google.com/spreadsheets/d/17Zv55yEjVdHrNzkH7BPnTCtXRs8GDHqchYjo9Svkyh4/edit#gid=0'
 
-$csv_url = 'https://docs.google.com/feeds/download/spreadsheets/Export?key=1haUVaFIxFq5IPqZugJ8cfCEqBrZvFFzcA-uXB4pTfW4&exportFormat=csv&gid=0'
+$csv_url = 'https://docs.google.com/feeds/download/spreadsheets/Export?key=17Zv55yEjVdHrNzkH7BPnTCtXRs8GDHqchYjo9Svkyh4&exportFormat=csv&gid=0'
 $csv_file = 'ED_RareGoods_SystemsDistance - CURRENT.csv'
 $output_dir = './routes'
 
